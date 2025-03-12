@@ -6,19 +6,29 @@ from langchain.schema.runnable import RunnableLambda, RunnableParallel, Runnable
 from langchain.schema.output_parser import StrOutputParser
 from langchain_google_firestore import FirestoreChatMessageHistory
 from google.cloud import firestore
+from langchain.memory import ConversationSummaryMemory
+from transformers import AutoTokenizer
 
 load_dotenv()
 PROJECT_ID = os.getenv("PROJECT_ID")
 COLLECTION_NAME = "chat_history"
 MODEL_NAME = os.getenv("MODEL_NAME")
+HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
+MAX_MESSAGE_TOKEN_SIZE=1200
 client = firestore.Client(project=PROJECT_ID)
 
 
 class FinanceService:
     def __init__(self, user_id: str):
         self.llm = ChatGroq(
-            model_name=MODEL_NAME, 
+            model_name=MODEL_NAME,
             temperature=0.3,
+            max_tokens=None
+        )
+
+        self.summary_llm = ChatGroq(
+            model_name=MODEL_NAME,
+            temperature=0,
             max_tokens=None
         )
 
@@ -28,15 +38,26 @@ class FinanceService:
             collection=COLLECTION_NAME
         )
 
-        
-    def combine_results(self,budget: dict, advice: str) -> dict:
+    def measure_token_usage(text: str) -> int:
+        model_name = "meta-llama/Meta-Llama-3-7B-Instruct"
+        tokenizer = AutoTokenizer.from_pretrained(model_name, token=HUGGING_FACE_TOKEN)
+        token_ids = tokenizer.encode(text, add_special_tokens=True)
+        return len(token_ids)
+
+    def get_summary_memory(self, chat_history: str) -> str:
+        memory = ConversationSummaryMemory(llm=self.llm)
+        memory.save_context({"input": chat_history}, {"output": ""})
+        summary = memory.load_memory_variables({})["history"]
+        return summary
+
+    def combine_results(self, budget: dict, advice: str) -> dict:
         print("budget")
         print(advice)
         return {
             "budget": budget,
             "advice": advice
         }
-        
+
     def get_remaining_details(self, query):
         conversation_template = ChatPromptTemplate.from_messages([
             ("system", """
@@ -59,9 +80,16 @@ class FinanceService:
             ("human", """{query}""")
         ])
 
-        self.chat_history.add_user_message(query)
+    # todo: check token size and reduce summarize history if larger than max-token-usage per message
+        history_token_size = self.measure_token_usage()
+
+        if history_token_size > MAX_MESSAGE_TOKEN_SIZE:
+            pass
+        else:
+            self.chat_history.add_user_message(query)
+
         conversation_chain = conversation_template | self.llm | StrOutputParser()
-        
+
         try:
             response = conversation_chain.invoke(self.chat_history.messages)
             # Check if response is valid (not empty and is a string)
@@ -75,7 +103,6 @@ class FinanceService:
             error_msg = f"Error processing request: {str(e)}"
             return {"error": error_msg}
 
-
     def process_query(self, query):
         # Add the current query to chat history
         self.chat_history.add_user_message(query)
@@ -88,8 +115,8 @@ class FinanceService:
 
         # Create the budget chain using the full conversation context (as a formatted string)
         budget_chain = (
-            ChatPromptTemplate.from_messages([
-                ("system", """
+                ChatPromptTemplate.from_messages([
+                    ("system", """
                     Parse the user's input to extract income sources, expense items, and saving goals.
                     For each income entry, create an object with the keys: source (string), amount (number), and frequency (string).
                     For each expense, create an object with the keys: category (string), amount (number), frequency (string), and necessity (either 'essential' or 'discretionary').
@@ -106,20 +133,21 @@ class FinanceService:
                     Output only the JSON object exactly in the structure above with no extra text.
                     Your task is to convert the user's prompt into the budget JSON following these guidelines.
                 """),
-                ("human", "Create a detailed budget based on: {query}")
-            ])
-            | self.llm 
-            | StrOutputParser()
+                    ("human", "Create a detailed budget based on: {query}")
+                ])
+                | self.llm
+                | StrOutputParser()
         )
 
         # Create the advice chain using the full conversation context as well
         advice_chain = (
-            ChatPromptTemplate.from_messages([
-                ("system", "You are an experienced financial advisor. Provide actionable financial advice based on the user's input; don't tell the user that you are an AI assistant."),
-                ("human", "Provide specific financial advice based on: {query}")
-            ])
-            | self.llm 
-            | StrOutputParser()
+                ChatPromptTemplate.from_messages([
+                    ("system",
+                     "You are an experienced financial advisor. Provide actionable financial advice based on the user's input; don't tell the user that you are an AI assistant."),
+                    ("human", "Provide specific financial advice based on: {query}")
+                ])
+                | self.llm
+                | StrOutputParser()
         )
 
         # Parallel chain to run both chains concurrently and combine their outputs
@@ -130,8 +158,8 @@ class FinanceService:
 
         # Validation chain checks if there is enough detail in the entire conversation.
         validation_chain = (
-            ChatPromptTemplate.from_messages([
-                ("system", """
+                ChatPromptTemplate.from_messages([
+                    ("system", """
                     You are a Budgeting Assistant responsible for determining if there is enough information 
                     from the entire conversation (past messages and the current user prompt) 
                     to generate a complete budget in the specified JSON format.
@@ -149,10 +177,10 @@ class FinanceService:
 
                     Your response must be either "true" or "false".
                 """),
-                ("human", "{query}")
-            ])
-            | self.llm
-            | StrOutputParser()
+                    ("human", "{query}")
+                ])
+                | self.llm
+                | StrOutputParser()
         )
 
         # Combine the validation result with the original chat history and raw query

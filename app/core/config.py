@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     PROJECT_ID: str
 
     class Config:
-        env_file = ".env"
+        env_file = "../../.env"
 
 @lru_cache()
 def get_settings():
