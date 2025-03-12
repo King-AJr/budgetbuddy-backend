@@ -21,6 +21,13 @@ class FinanceService:
             temperature=0.3,
             max_tokens=None
         )
+        
+         # Separate LLM definition with temperature=0 for regular_conversation_chain
+        self.llm_fixed = ChatGroq(
+            model_name=MODEL_NAME, 
+            temperature=0, 
+            max_tokens=None
+        )
 
         self.chat_history = FirestoreChatMessageHistory(
             session_id=user_id,
@@ -85,7 +92,33 @@ class FinanceService:
         # Helper to format chat history as text
         def format_chat_history(messages):
             return "\n".join([f"{m.type}: {m.content}" for m in messages])
-
+        # Confirm if the user's prompt is part of a regular converstaion or budget-related
+        conversation_type_chain = (
+            ChatPromptTemplate.from_messages([
+                ("system", """
+                    Determine if the user's query is related to finance/budgeting or if it is a regular conversation.
+                    If the query is related to finance, budgeting, income, expenses, savings, or any financial advice, respond with "finance".
+                    Otherwise, respond with "regular".
+                """),
+                ("human", "{query}")
+            ])
+            | self.llm
+            | StrOutputParser()
+        )
+        
+        # Regular conversation chain
+        regular_conversation_chain = (
+            ChatPromptTemplate.from_messages([
+                ("system", """
+                    You are a helpful assistant. If this is the first message in the conversation, start your response with:
+                    "Hi, I am FinAlpha, your personal budgeting guide. Feel free to give me details about your income and expenses so I can create a budget for you and offer financial advice."
+                    Otherwise, respond to the user's query in a friendly and informative manner.
+                """),
+                ("human", "{query}")
+            ])
+            | self.llm_fixed
+            | StrOutputParser()
+        )
         # Create the budget chain using the full conversation context (as a formatted string)
         budget_chain = (
             ChatPromptTemplate.from_messages([
@@ -175,8 +208,18 @@ class FinanceService:
             # Default case if validation returns an unexpected result
             RunnableLambda(lambda x: "Invalid response from validation")
         )
-
+    
         # Chain everything together and invoke
-        chain = combined_chain | branches
+        chain = conversation_type_chain | RunnableBranch(
+            (
+                lambda x: "finance" in x,
+                combined_chain | branches
+            ),
+            (
+                lambda x: "regular" in x,
+                regular_conversation_chain
+            )
+        )
+
         result = chain.invoke({"query": format_chat_history(messages)})
         return result
