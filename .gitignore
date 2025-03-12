@@ -1,0 +1,5 @@
+.venv
+__pycache__
+.env
+./genius_credentials.json
+genius_credentials.json
