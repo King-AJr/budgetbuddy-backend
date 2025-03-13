@@ -14,8 +14,15 @@ PROJECT_ID = os.getenv("PROJECT_ID")
 COLLECTION_NAME = "chat_history"
 MODEL_NAME = os.getenv("MODEL_NAME")
 HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
-MAX_MESSAGE_TOKEN_SIZE=1200
+MAX_MESSAGE_TOKEN_SIZE = 1200
 client = firestore.Client(project=PROJECT_ID)
+
+
+def measure_token_usage(text: str) -> int:
+    model_name = "meta-llama/Meta-Llama-3-7B-Instruct"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, token=HUGGING_FACE_TOKEN)
+    token_ids = tokenizer.encode(text, add_special_tokens=True)
+    return len(token_ids)
 
 
 class FinanceService:
@@ -38,15 +45,9 @@ class FinanceService:
             collection=COLLECTION_NAME
         )
 
-    def measure_token_usage(text: str) -> int:
-        model_name = "meta-llama/Meta-Llama-3-7B-Instruct"
-        tokenizer = AutoTokenizer.from_pretrained(model_name, token=HUGGING_FACE_TOKEN)
-        token_ids = tokenizer.encode(text, add_special_tokens=True)
-        return len(token_ids)
-
-    def get_summary_memory(self, chat_history: str) -> str:
+    def get_summary_memory(self) -> str:
         memory = ConversationSummaryMemory(llm=self.llm)
-        memory.save_context({"input": chat_history}, {"output": ""})
+        memory.save_context({"input": self.chat_history}, {"output": ""})
         summary = memory.load_memory_variables({})["history"]
         return summary
 
@@ -80,11 +81,10 @@ class FinanceService:
             ("human", """{query}""")
         ])
 
-    # todo: check token size and reduce summarize history if larger than max-token-usage per message
-        history_token_size = self.measure_token_usage()
-
-        if history_token_size > MAX_MESSAGE_TOKEN_SIZE:
-            pass
+        # todo: check token size and reduce summarize history if larger than max-token-usage per message
+        if measure_token_usage(str(self.chat_history)) > MAX_MESSAGE_TOKEN_SIZE:
+            summarized_history = self.get_summary_memory()
+            self.chat_history = summarized_history
         else:
             self.chat_history.add_user_message(query)
 
