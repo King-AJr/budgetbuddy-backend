@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str
     MODEL_NAME: str = MODEL_NAME
     PROJECT_ID: str
+    HUGGING_FACE_TOKEN: str
 
     class Config:
         env_file = ".env"

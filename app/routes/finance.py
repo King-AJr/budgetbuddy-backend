@@ -16,4 +16,4 @@ async def analyze_finances(
 
     finance_service = FinanceService(user_id=user["uid"])
     result = finance_service.process_query(query.prompt)
-    return {"result": result}
+    return result

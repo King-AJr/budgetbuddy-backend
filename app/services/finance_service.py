@@ -36,11 +36,16 @@ class FinanceService:
             collection=COLLECTION_NAME
         )
 
+    def print_step(self, step_name):
+        def inner(x):
+            print(f"Step {step_name}: {x}")
+            return x
+        return inner
+
         
     def combine_results(self, budget, advice: str) -> dict:
+        print("inside combine results")
         if isinstance(budget, str):
-            # Extract the JSON object from the string by taking the substring
-            # from the first '{' to the last '}'
             first_brace = budget.find("{")
             last_brace = budget.rfind("}")
             if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
@@ -93,11 +98,9 @@ class FinanceService:
 
 
     def process_query(self, query):
-        # Add the current query to chat history
         self.chat_history.add_user_message(query)
         messages = self.chat_history.messages
 
-        # Helper to format chat history as text
         def format_chat_history(messages):
             return "\n".join([f"{m.type}: {m.content}" for m in messages])
         # Confirm if the user's prompt is part of a regular converstaion or budget-related
@@ -144,7 +147,8 @@ class FinanceService:
                     If totalMonthlyExpenses is not known or provided return [] for totalMonthlyExpenses.
                     If monthlySavings is not known or provided return [] for monthlySavings.
                     If savingsRate is not known or provided return [] for savingsRate.
-                    Output only the JSON object exactly in the structure above with no extra text.
+                    Output only the JSON object exactly in the structure above with no extra text, 
+                    the keys in the json should always be income, expense, savings then summary
                     Your task is to convert the user's prompt into the budget JSON following these guidelines.
                 """),
                 ("human", "Create a detailed budget based on: {query}")
@@ -197,7 +201,7 @@ class FinanceService:
         )
 
         # Combine the validation result with the original chat history and raw query
-        combined_chain = validation_chain | RunnableLambda(lambda validation_result: {
+        combined_chain = validation_chain | RunnableLambda(self.print_step("validation_chain")) | RunnableLambda(lambda validation_result: {
             "validation": validation_result,
             "chat_history": messages,
             "raw_query": query
@@ -217,10 +221,10 @@ class FinanceService:
             RunnableLambda(lambda x: "Invalid response from validation")
         )
     
-        finance_chain = combined_chain | branches
+        finance_chain = combined_chain | RunnableLambda(self.print_step("combined_chain")) | branches
         
         # Chain everything together and invoke
-        chain = conversation_type_chain | RunnableLambda(lambda validation_result: {
+        chain = conversation_type_chain | RunnableLambda(self.print_step("conversation_type_chain")) | RunnableLambda(lambda validation_result: {
             "validation": validation_result,
             "raw_query": query
         }) | RunnableBranch(
