@@ -44,7 +44,6 @@ class FinanceService:
 
         
     def combine_results(self, budget, advice: str) -> dict:
-        print("inside combine results")
         if isinstance(budget, str):
             first_brace = budget.find("{")
             last_brace = budget.rfind("}")
@@ -201,7 +200,7 @@ class FinanceService:
         )
 
         # Combine the validation result with the original chat history and raw query
-        combined_chain = validation_chain | RunnableLambda(self.print_step("validation_chain")) | RunnableLambda(lambda validation_result: {
+        combined_chain = validation_chain | RunnableLambda(lambda validation_result: {
             "validation": validation_result,
             "chat_history": messages,
             "raw_query": query
@@ -221,10 +220,10 @@ class FinanceService:
             RunnableLambda(lambda x: "Invalid response from validation")
         )
     
-        finance_chain = combined_chain | RunnableLambda(self.print_step("combined_chain")) | branches
+        finance_chain = combined_chain | branches
         
         # Chain everything together and invoke
-        chain = conversation_type_chain | RunnableLambda(self.print_step("conversation_type_chain")) | RunnableLambda(lambda validation_result: {
+        chain = conversation_type_chain | RunnableLambda(lambda validation_result: {
             "validation": validation_result,
             "raw_query": query
         }) | RunnableBranch(
