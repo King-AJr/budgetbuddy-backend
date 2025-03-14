@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
@@ -36,9 +37,17 @@ class FinanceService:
         )
 
         
-    def combine_results(self,budget: dict, advice: str) -> dict:
-        print("budget")
-        print(advice)
+    def combine_results(self, budget, advice: str) -> dict:
+        if isinstance(budget, str):
+            # Extract the JSON object from the string by taking the substring
+            # from the first '{' to the last '}'
+            first_brace = budget.find("{")
+            last_brace = budget.rfind("}")
+            if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
+                raise ValueError("Budget string does not contain a valid JSON object.")
+            trimmed = budget[first_brace:last_brace+1]
+            # Parse the trimmed JSON string into a dictionary
+            budget = json.loads(trimmed)
         return {
             "budget": budget,
             "advice": advice
@@ -87,7 +96,6 @@ class FinanceService:
         # Add the current query to chat history
         self.chat_history.add_user_message(query)
         messages = self.chat_history.messages
-        print(messages)
 
         # Helper to format chat history as text
         def format_chat_history(messages):
@@ -209,17 +217,29 @@ class FinanceService:
             RunnableLambda(lambda x: "Invalid response from validation")
         )
     
+        finance_chain = combined_chain | branches
+        
         # Chain everything together and invoke
-        chain = conversation_type_chain | RunnableBranch(
+        chain = conversation_type_chain | RunnableLambda(lambda validation_result: {
+            "validation": validation_result,
+            "raw_query": query
+        }) | RunnableBranch(
             (
-                lambda x: "finance" in x,
-                combined_chain | branches
+                lambda x: "finance" in x["validation"],
+                RunnableLambda(lambda x: finance_chain.invoke({"query": x["raw_query"]}))
             ),
             (
-                lambda x: "regular" in x,
-                regular_conversation_chain
-            )
+                lambda x: "regular" in x["validation"],
+                RunnableLambda(lambda x: regular_conversation_chain.invoke({"query": x["raw_query"]}))
+            ),
+            RunnableLambda(lambda x: "Invalid response from validation")
         )
 
         result = chain.invoke({"query": format_chat_history(messages)})
+        if isinstance(result, dict):
+            content = json.dumps(result)
+        else:
+            content = result
+
+        self.chat_history.add_ai_message(content)
         return result
